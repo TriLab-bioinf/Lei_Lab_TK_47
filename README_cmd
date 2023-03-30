@@ -1,0 +1,4 @@
+grep 'N._' old_vs_new.1.coords|perl -lane 'chomp;if($F[2]<$X[3]){$s="+1"}else{$s="-1"; ($F[2],$F[3])=($F[3],$F[2]) }; print "$F[11]\t$F[0]\t$F[1]\t$F[12]\t$F[2]\t$F[3]\t$s\t$F[6]" '> syntenic_annotation.txt
+
+
+

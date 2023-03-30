@@ -1,0 +1,259 @@
+---
+title: "syntenic plots (code adapted from https://github.com/marta-fb/syntenyPlotteR)"
+output:
+  html_document:
+    df_print: paged
+    
+author: Hernan Lorenzi
+---
+
+### Load required libraries
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(colortools)
+library(cowplot)
+```
+**Example of input files:**
+
+1- syntenic_annotation.txt:
+
+NC_027961.1	1	15264	scf_41	25392	40656	-1	99.85
+
+NC_071294.1	346	5741097	scf_16	6910965	12651725	-1	99.99
+
+NC_071294.1	5741098	12620423	scf_16	31704	6911000	-1	99.99
+
+NC_071294.1	12620125	12651313	scf_16	814	32037	-1	99.76
+
+2- new_genome_size:
+
+NC_071294.1	12651329
+
+NC_071295.1	12514254
+
+NC_071296.1	12058152
+
+3- old_genome_size:
+
+scf_1	11091506
+
+scf_2	10267549
+
+scf_3	12481282
+
+### Define input files and names
+```{r}
+# Init variables
+infile <- "syntenic_annotation.txt"
+output <- "syntenic_annotation_plot"
+refSizes <- "new_genome_size"
+tarSizes <- "old_genome_size"
+refName <- "P. interpunctella\n(GCF_027563975.1)"
+tarName <- "P. interpunctella\n(old)"
+```
+
+
+### Upload data
+```{r}
+xstart<-xend<-refchr<-tarchr<-x<-y<-group<-fill<-NULL
+dataTMP<- tibble(read.delim(infile, header=FALSE))
+data<-dataTMP[,c(4,5,6,1,2,3,7,8)]
+ref_sizes <-tibble(read.delim(refSizes, header=FALSE)) #to be consistent with naming in EH
+tar_sizes <-tibble(read.delim(tarSizes, header=FALSE))
+colnames(data) = c("tarchr", "tarstart", "tarend", "refchr", "refstart", "refend", "dir", "notUsed")
+colnames(ref_sizes) = c("refchr", "size")
+colnames(tar_sizes) = c("tarchr", "size")
+
+```
+
+### Sort input data 
+```{r}
+# Sort ref scf by size
+ref_sizes <- ref_sizes[order(ref_sizes$size, decreasing = TRUE),]
+
+# Sort data df by ref_sizes positions
+data_sorted <- left_join(data, ref_sizes, by = "refchr")
+data_sorted <- data_sorted[order(data_sorted$size, decreasing = TRUE),]
+data <- data_sorted
+
+# Create vector with target scf ids
+tar_scf_ids <- unique(data_sorted$tarchr)
+missing_tar <- as.vector(tar_sizes$tarchr[! tar_sizes$tarchr %in% tar_scf_ids])
+tar_scf_ids  <- c(tar_scf_ids,missing_tar)
+tar_sizes <- left_join(data.frame(tarchr = tar_scf_ids), tar_sizes, by = "tarchr")
+
+```
+
+### Add gap in between reference chromosomes and convert to "linear" genome
+```{r}
+
+for (i in c(1:nrow(ref_sizes))){
+  #print(i)
+  if (i == 1){
+    total_start = 1
+    total_end = ref_sizes[i, "size"]
+  } else {
+    total_start = total_end + 6000000
+    total_end = total_start + ref_sizes[i, "size"]
+  }
+  ref_sizes[i,"xstart"] = total_start
+  ref_sizes[i, "xend"] = total_end
+}
+```
+
+### Add gap in between target chromosomes
+```{r}
+for (i in c(1:nrow(tar_sizes))){
+  #print(i)
+  if (i == 1){
+    total_start = 1
+    total_end = tar_sizes[i, "size"]
+  } else {
+    total_start = total_end + 6000000
+    total_end = total_start + tar_sizes[i, "size"]
+  }
+  tar_sizes[i,"xstart"] = total_start
+  tar_sizes[i, "xend"] = total_end
+}
+```
+
+
+### Convert coordinates to linear genome and creates synteny polygon coordinates
+```{r}
+#This converts coordinates to linear genome and creates synteny polygon coordinates
+synteny = data.frame()
+for (i in c(1:nrow(data))){
+  tar_chr = data[[i,"tarchr"]] # [[]] is required for tibble, 
+                              # otherwise returns a tibble and not a scalar
+  ref_chr = data[[i,"refchr"]]
+  dir = data[[i, "dir"]]
+  
+  tar_add = tar_sizes[as.character(tar_sizes$tarchr)==as.character(tar_chr),]$xstart
+  ref_add = ref_sizes[as.character(ref_sizes$refchr)==as.character(ref_chr),]$xstart
+  tar_y = 0.1
+  ref_y = 2
+  tar_xstart = data[[i,"tarstart"]] + tar_add
+  tar_xend = data[[i,"tarend"]] + tar_add
+  ref_xstart = data[[i,"refstart"]] + ref_add
+  ref_xend = data[[i,"refend"]] + ref_add
+  
+  inverted = grepl("-", dir, fixed = TRUE)
+  if(inverted == TRUE){
+    df = data.frame(x = c(tar_xstart, tar_xend, ref_xstart, ref_xend), 
+                    y = c(tar_y, tar_y, ref_y, ref_y),
+                    fill = ref_chr,
+                    group = paste0("s",i)
+                    )
+  } else {
+    df = data.frame(x = c(tar_xstart, ref_xstart, ref_xend,  tar_xend), y = c(tar_y, ref_y, ref_y, tar_y),
+                    fill = ref_chr, 
+                    group = paste0("s",i))
+  }
+  synteny = rbind(synteny,df)
+}
+```
+
+```{r}
+#making sure chr columns are factors
+tar_sizes$tarchr<-as.factor(tar_sizes$tarchr)
+ref_sizes$refchr<-as.factor(ref_sizes$refchr)
+synteny$fill<-as.factor(synteny$fill)
+  
+```
+
+### Make plots
+
+#### Set pallete
+```{r}
+my_pallete <- list()
+my_pallete <- wheel("darkblue", num = nrow(ref_sizes))
+names(my_pallete) <- ref_sizes$refchr
+
+my_pallete_synt <- list()
+my_pallete_synt <- sample(wheel("darkblue", num = length(unique(synteny$group))))
+names(my_pallete_synt) <- (unique(synteny$group))
+
+```
+
+#### Generate synteny plot coloring by reference chromosome
+```{r}
+#This prints plot
+
+
+pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+    geom_rect(data=ref_sizes, 
+              mapping=aes(xmin=xstart, 
+                          xmax=xend, 
+                          ymin=2, 
+                          ymax=2.10, 
+                          fill=refchr),
+              color="black", alpha = 0.75, size = 0.3 
+              ) +
+    geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
+    geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+    geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                       color="black", alpha = 0.75, size = 0.2 ) +
+    geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
+    geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+    geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = fill)) +
+    scale_fill_manual(values = my_pallete) +
+    theme(panel.background = element_blank(),
+                   strip.background = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.title.x = element_blank(),
+                   axis.text.x = element_blank(),
+                   axis.text.y = element_blank(),
+                   axis.ticks.x=element_blank(),
+                   axis.ticks.y=element_blank(),
+                   legend.position="none")
+
+ggsave2(filename = "synteny_plot.pdf", plot = pairwise.p1, width = 25, height = 5)
+print(pairwise.p1)
+  
+
+```
+
+#### Generate synteny plot coloring by syntenic block
+```{r}
+#This prints plot
+
+
+pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+    geom_rect(data=ref_sizes, 
+              mapping=aes(xmin=xstart, 
+                          xmax=xend, 
+                          ymin=2, 
+                          ymax=2.10, 
+                          fill=refchr),
+              color="black", alpha = 0.75, size = 0.3 
+              ) +
+    geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
+    geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+    geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                       color="black", alpha = 0.75, size = 0.2 ) +
+    geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
+    geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+    geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
+    scale_fill_manual(values = my_pallete_synt) +
+    theme(panel.background = element_blank(),
+                   strip.background = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.title.x = element_blank(),
+                   axis.text.x = element_blank(),
+                   axis.text.y = element_blank(),
+                   axis.ticks.x=element_blank(),
+                   axis.ticks.y=element_blank(),
+                   legend.position="none")
+
+ggsave2(filename = "synteny_plot_color_synt_block.pdf", plot = pairwise.p2, width = 25, height = 5)
+print(pairwise.p2)
+  
+
+```
+
+
+
+
+
+
