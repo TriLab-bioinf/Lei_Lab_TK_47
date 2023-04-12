@@ -1,9 +1,6 @@
 ---
 title: "syntenic plots (code adapted from https://github.com/marta-fb/syntenyPlotteR)"
-output:
-  html_document:
-    df_print: paged
-    
+output: html
 author: Hernan Lorenzi
 ---
 
@@ -65,6 +62,17 @@ colnames(data) = c("tarchr", "tarstart", "tarend", "refchr", "refstart", "refend
 colnames(ref_sizes) = c("refchr", "size")
 colnames(tar_sizes) = c("tarchr", "size")
 
+```
+
+### Select specifc target chromosomes for plots (leave as is for all genome)
+```{r}
+target_chr_id = 'all'
+if(target_chr_id != 'all'){
+  target_chrom <- c(target_chr_id)
+  data <- filter(data,tarchr %in% target_chrom)
+  ref_sizes <-  filter(ref_sizes, refchr %in% data$refchr)
+  tar_sizes <- filter(tar_sizes, tarchr %in% target_chrom)
+}
 ```
 
 ### Sort input data 
@@ -180,78 +188,187 @@ names(my_pallete_synt) <- (unique(synteny$group))
 ```{r}
 #This prints plot
 
+get_chr_scale <- function(chr_size, position){
+  if(position == 'top'){
+    y_min <- 2.1
+    y_med <- 2.12
+    y_max <- 2.14
+  }else if(position == 'bottom'){
+    y_min <- 0
+    y_med <- -0.02
+    y_max <- -0.04
+  }else{
+    stop()
+  }
+  divisions <- 2.5e5
+  numb_div <- round(chr_size/divisions, digits = 0)
+  x_ccords <- c()
+  counter <- 0
+  while (counter <=  chr_size){
+    x_ccords <- c(x_ccords, counter)
+    counter <- counter + divisions
+  }
+  chrom_pos <-  tibble(x_coord=x_ccords, 
+                       y_start=y_min) 
+  chrom_pos <- chrom_pos %>% mutate(y_end = ifelse(x_coord / 1e6 == as.integer(chrom_pos$x_coord / 1e6),y_max, y_med))
+  chrom_pos <- chrom_pos %>% mutate(label=ifelse(x_coord / 1e6 == as.integer(chrom_pos$x_coord / 1e6),as.character(as.integer(chrom_pos$x_coord / 1e6)), ""))
+  return(chrom_pos)
+}                    
 
-pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) +
-    geom_rect(data=ref_sizes, 
-              mapping=aes(xmin=xstart, 
-                          xmax=xend, 
-                          ymin=2, 
-                          ymax=2.10, 
-                          fill=refchr),
-              color="black", alpha = 0.75, size = 0.3 
-              ) +
-    geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
-    geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
-    geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
-                       color="black", alpha = 0.75, size = 0.2 ) +
-    geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
-    geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
-    geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = fill)) +
-    scale_fill_manual(values = my_pallete) +
-    theme(panel.background = element_blank(),
-                   strip.background = element_blank(),
-                   axis.title.y = element_blank(),
-                   axis.title.x = element_blank(),
-                   axis.text.x = element_blank(),
-                   axis.text.y = element_blank(),
-                   axis.ticks.x=element_blank(),
-                   axis.ticks.y=element_blank(),
-                   legend.position="none")
-
-ggsave2(filename = "synteny_plot.pdf", plot = pairwise.p1, width = 25, height = 5)
-print(pairwise.p1)
+if(target_chr_id != 'all'){
+  my_chr_text_angle <- ifelse(length(unique(ref_sizes$refchr)) == 1, 0,45)
   
-
+  pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_rect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                color="black", alpha = 0.75, size = 0.3) + 
+      geom_segment(data = get_chr_scale(ref_sizes$xend, position = 'top'), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(ref_sizes$xend, position = 'top'),
+                aes(x=x_coord,y=y_end+0.02,label=label),size=3) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                         color="black", alpha = 0.75, size = 0.2 ) +
+      geom_segment(data = get_chr_scale(tar_sizes$xend, position = "bottom"), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(tar_sizes$xend, position = 'bottom'),
+                aes(x=x_coord,y=y_end-0.02,label=label),size=3) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = fill)) +
+      scale_fill_manual(values = my_pallete) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+      
+  ggsave2(filename = paste0("synteny_plot_",chr_id,".pdf"), plot = pairwise.p1, width = 8, height = 5)
+  print(pairwise.p1)
+  
+}
 ```
 
 #### Generate synteny plot coloring by syntenic block
 ```{r}
 #This prints plot
 
-
-pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
-    geom_rect(data=ref_sizes, 
-              mapping=aes(xmin=xstart, 
-                          xmax=xend, 
-                          ymin=2, 
-                          ymax=2.10, 
-                          fill=refchr),
-              color="black", alpha = 0.75, size = 0.3 
-              ) +
-    geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
-    geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
-    geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
-                       color="black", alpha = 0.75, size = 0.2 ) +
-    geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
-    geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
-    geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
-    scale_fill_manual(values = my_pallete_synt) +
-    theme(panel.background = element_blank(),
-                   strip.background = element_blank(),
-                   axis.title.y = element_blank(),
-                   axis.title.x = element_blank(),
-                   axis.text.x = element_blank(),
-                   axis.text.y = element_blank(),
-                   axis.ticks.x=element_blank(),
-                   axis.ticks.y=element_blank(),
-                   legend.position="none")
-
-ggsave2(filename = "synteny_plot_color_synt_block.pdf", plot = pairwise.p2, width = 25, height = 5)
-print(pairwise.p2)
+if(target_chr_id != 'all'){
+  pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_rect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                color="black", alpha = 0.75, size = 0.3 
+                ) +
+      geom_segment(data = get_chr_scale(ref_sizes$xend, position = 'top'), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(ref_sizes$xend, position = 'top'),
+                aes(x=x_coord,y=y_end+0.02,label=label),size=3) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                         color="black", alpha = 0.75, size = 0.2 ) +
+      geom_segment(data = get_chr_scale(tar_sizes$xend, position = "bottom"), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(tar_sizes$xend, position = 'bottom'),
+                aes(x=x_coord,y=y_end-0.02,label=label),size=3) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
+      scale_fill_manual(values = my_pallete_synt) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
   
-
+  ggsave2(filename = paste0("synteny_plot_color_synt_block_",chr_id,".pdf"), plot = pairwise.p2, width = 8, height = 5)
+  print(pairwise.p2)
+  
+}
 ```
 
+#### Generate synteny plot coloring by reference chromosome
+```{r}
+#This prints plot
+if(target_chr_id == 'all'){
+  pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_rect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                color="black", alpha = 0.75, size = 0.3 
+                ) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                         color="black", alpha = 0.75, size = 0.2 ) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = fill)) +
+      scale_fill_manual(values = my_pallete) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+  ggsave2(filename = "synteny_plot.pdf", plot = pairwise.p1, width = 25, height = 5)
+  print(pairwise.p1)
+}
+```
+
+#### Generate synteny plot coloring by syntenic block
+```{r}
+#This prints plot
+if(target_chr_id == 'all'){
+  pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_rect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                color="black", alpha = 0.75, size = 0.3 
+                ) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=45) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      geom_rect(data=tar_sizes, mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),fill="grey85",
+                         color="black", alpha = 0.75, size = 0.2 ) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=45) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
+      scale_fill_manual(values = my_pallete_synt) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+  ggsave2(filename = "synteny_plot_color_synt_block.pdf", plot = pairwise.p2, width = 25, height = 5)
+  print(pairwise.p2)
+}
+```
 
 
 
