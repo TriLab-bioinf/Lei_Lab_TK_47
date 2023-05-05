@@ -1,0 +1,561 @@
+---
+title: "syntenic plots (code adapted from https://github.com/marta-fb/syntenyPlotteR)"
+output: html
+author: Hernan Lorenzi
+---
+
+### Load required libraries
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(colortools)
+library(cowplot)
+```
+**Example of input files:**
+
+1- syntenic_annotation.txt:
+
+NC_027961.1	1	15264	scf_41	25392	40656	-1	99.85
+
+NC_071294.1	346	5741097	scf_16	6910965	12651725	-1	99.99
+
+NC_071294.1	5741098	12620423	scf_16	31704	6911000	-1	99.99
+
+NC_071294.1	12620125	12651313	scf_16	814	32037	-1	99.76
+
+2- new_genome_size:
+
+NC_071294.1	12651329
+
+NC_071295.1	12514254
+
+NC_071296.1	12058152
+
+3- old_genome_size:
+
+scf_1	11091506
+
+scf_2	10267549
+
+scf_3	12481282
+
+### Define input files and names
+```{r}
+# Init variables
+infile <- "Pinter_vs_Bmori_promer.matchList.filtered.synteny_chr.txt"
+output <- "syntenic_annotation_Bm_Pi_plot"
+refSizes <- "karyotype.txt"
+tarSizes <- "new_genome_size.txt"
+refName <- "B.mori"
+tarName <- "P.interpunctella (new)"
+chr2acc_file <- "chr2acc_Bmori.csv"
+```
+
+
+
+
+### Upload data
+```{r}
+xstart<-xend<-refchr<-tarchr<-x<-y<-group<-fill<-NULL
+dataTMP<- tibble(read.delim(file =infile, header=TRUE))
+data<-dataTMP[,c(4,5,6,1,2,3)]
+data <- data %>% mutate( dir = ifelse(((as.numeric(End_2) - as.numeric(Start_2)) * (as.numeric(End_1) - as.numeric(Start_1)) ) > 0, 1, -1))
+
+ref_sizes <-tibble(read.delim(refSizes, header=TRUE)) #to be consistent with naming in EH
+tar_sizes <-tibble(read.delim(tarSizes, header=TRUE))
+colnames(data) = c("tarchr", "tarstart", "tarend", "refchr", "refstart", "refend", "dir")
+colnames(ref_sizes) = c("refchr", "size")
+colnames(tar_sizes) = c("tarchr", "size")
+
+# chr2acc is required if ref_sizes, tar_sizes and data files use accession numbers and you want to display chromosome IDs instead.
+chr2acc<- tibble(read.delim(file = chr2acc_file, header=TRUE, sep = ","))
+
+```
+
+# Filter out small chromosomes
+```{r}
+# Select chromosomes to keep
+cutoff = 500000
+ref_long <- filter(ref_sizes, size > cutoff)$refchr
+tar_long <- filter(tar_sizes, size > cutoff)$tarchr
+
+# remove small chromosomes from syntenic blocks and tar/ref_size files
+data <- filter(data, tarchr %in% tar_long & refchr %in% ref_long)
+ref_sizes <- filter(ref_sizes, refchr %in% ref_long)
+tar_sizes <- filter(tar_sizes, tarchr %in% tar_long)
+```
+
+### Select specifc target chromosomes for plots (leave as is for all genome)
+```{r}
+target_chr_id = 'all'
+if(target_chr_id != 'all'){
+  target_chrom <- c(target_chr_id)
+  data <- filter(data,tarchr %in% target_chrom)
+  ref_sizes <-  filter(ref_sizes, refchr %in% data$refchr)
+  tar_sizes <- filter(tar_sizes, tarchr %in% target_chrom)
+}
+```
+
+### Sort input data 
+```{r}
+# Sort ref scf by size
+ref_sizes <- ref_sizes[order(ref_sizes$size, decreasing = TRUE),]
+
+# Sort data df by ref_sizes positions
+data_sorted <- left_join(data, ref_sizes, by = "refchr")
+data_sorted <- data_sorted[order(data_sorted$size, decreasing = TRUE),]
+data <- data_sorted
+
+# Create vector with target scf ids
+
+data_max <- data %>% mutate(hit_len = refend - refstart) %>% 
+                     group_by(refchr) %>%
+                     filter(hit_len == max(hit_len))
+tar_scf_ids <- unique(data_max$tarchr)
+#tar_scf_ids <- unique(data_sorted$tarchr)
+missing_tar <- as.vector(tar_sizes$tarchr[! tar_sizes$tarchr %in% tar_scf_ids])
+tar_scf_ids  <- c(tar_scf_ids,missing_tar)
+tar_sizes <- left_join(data.frame(tarchr = tar_scf_ids), tar_sizes, by = "tarchr")
+
+```
+
+## Sort tar_sizes based on  data$refchr order and syntenic blocks##
+```{r TEMP}
+x <- filter(data %>% group_by(refchr,tarchr) %>% count(), n > 5)
+
+# Create numerical index list for data$refchr to match chr order
+my_ref_chr_order <- 1:length(unique(data$refchr))
+names(my_ref_chr_order) <- unique(data$refchr)
+                    
+# Sort Bm chr in x based on my_Bm_chr_order
+x$order_idx <- my_ref_chr_order[x$refchr]
+x <- x[order(x$order_idx, decreasing = F),]
+
+# Sort tar_sizes based on x order
+my_tar_chr_order <- 1:nrow(x)
+names(my_tar_chr_order) <- x$tarchr
+tar_sizes$order_idx <- my_tar_chr_order[tar_sizes$tarchr]
+tar_sizes <- tar_sizes[order(tar_sizes$order_idx, decreasing = F),]
+```
+
+### Add gap in between reference chromosomes and convert to "linear" genome
+```{r}
+
+for (i in c(1:nrow(ref_sizes))){
+  #print(i)
+  if (i == 1){
+    total_start = 1
+    total_end = ref_sizes[i, "size"]
+  } else {
+    total_start = total_end + 6000000
+    total_end = total_start + ref_sizes[i, "size"]
+  }
+  ref_sizes[i,"xstart"] = total_start
+  ref_sizes[i, "xend"] = total_end
+}
+```
+
+### Add gap in between target chromosomes
+```{r}
+for (i in c(1:nrow(tar_sizes))){
+  #print(i)
+  if (i == 1){
+    total_start = 1
+    total_end = tar_sizes[i, "size"]
+  } else {
+    total_start = total_end + 6000000
+    total_end = total_start + tar_sizes[i, "size"]
+  }
+  tar_sizes[i,"xstart"] = total_start
+  tar_sizes[i, "xend"] = total_end
+}
+```
+
+## Calculate left padding to center ref and tar chromosomes
+```{r}
+plot_align_mode <- c('centered','spanned')[2] # set to 1 or 2
+tar_pad <- ref_pad <- 0
+ref_len <- tail(ref_sizes$xend,1)
+tar_len <- tail(tar_sizes$xend,1)
+
+
+if (ref_len > tar_len){
+  if (plot_align_mode == 'centered'){
+      tar_pad <- round((ref_len - tar_len) / 2, digits = 0)
+      tar_sizes$xstart <- tar_sizes$xstart + tar_pad
+      tar_sizes$xend <- tar_sizes$xend + tar_pad
+    } else {
+      n_chrom <- nrow(tar_sizes)
+      tar_pad <- round((ref_len - tar_len) / (n_chrom - 1), digits = 0)
+      p = 0:(n_chrom - 1)
+      tar_pad_vector <- tar_pad * p
+      tar_sizes$xstart <- tar_sizes$xstart + tar_pad_vector
+      tar_sizes$xend <- tar_sizes$xend + tar_pad_vector
+    }
+} else {
+  if (plot_align_mode == 'centered'){
+      ref_pad <- round((tar_len - ref_len) / 2, digits = 0)
+      ref_sizes$xstart <- ref_sizes$xstart + ref_pad
+      ref_sizes$xend <- ref_sizes$xend + ref_pad
+    } else {
+      n_chrom <- nrow(ref_sizes)
+      ref_pad <- round((tar_len - ref_len) / (n_chrom - 1), digits = 0)
+      p = 0:(n_chrom - 1)
+      ref_pad_vector <- ref_pad * p
+      ref_sizes$xstart <- ref_sizes$xstart + ref_pad_vector
+      ref_sizes$xend <- ref_sizes$xend + ref_pad_vector
+  }
+}
+```
+
+### Calculate target chromosome orientation
+```{r}
+# Reverse syntenic blocks if hits are mostly on reverse strand
+chr_strand_target = 'forward'
+if (!is.na(table(data$dir == -1)['TRUE']) & ( (table(data$dir == -1)['TRUE'] - length(data$dir)) >= 0) ){
+    chr_strand_target = 'reverse'
+  
+}
+
+#> data$tarstart <- tar_sizes$size - data$tarstart
+#> data$tarend <- tar_sizes$size - data$tarend
+
+```
+
+### Convert coordinates to linear genome and creates synteny polygon coordinates
+```{r}
+#This converts coordinates to linear genome and creates synteny polygon coordinates
+synteny = data.frame()
+for (i in c(1:nrow(data))){
+  tar_chr = data[[i,"tarchr"]] # [[]] is required for tibble, 
+                              # otherwise returns a tibble and not a scalar
+  ref_chr = data[[i,"refchr"]]
+  dir = data[[i, "dir"]]
+  
+  # Adjust position when there are many chromosomes
+  tar_add = tar_sizes[as.character(tar_sizes$tarchr)==as.character(tar_chr),]$xstart
+  ref_add = ref_sizes[as.character(ref_sizes$refchr)==as.character(ref_chr),]$xstart
+  tar_y = 0.05
+  ref_y = 2.05
+  tar_xstart = data[[i,"tarstart"]] + tar_add
+  tar_xend = data[[i,"tarend"]] + tar_add
+  ref_xstart = data[[i,"refstart"]] + ref_add
+  ref_xend = data[[i,"refend"]] + ref_add
+  
+  df = data.frame(x = c(tar_xstart, ref_xstart, ref_xend,  tar_xend), y = c(tar_y, ref_y, ref_y, tar_y),fill = ref_chr, group = paste0("s",i))
+  
+  synteny = rbind(synteny, df)
+  
+  # Substract tar_chr size to tar_choords for inverted syntenic block
+  inverted = grepl("-", dir, fixed = TRUE)
+  if(inverted == TRUE & chr_strand_target == "reverse"){
+    synteny[synteny$y == 0.05 & synteny$group == paste0("s",i), ]$x <- tar_sizes$size + 1 - synteny[synteny$y == 0.05 & synteny$group == paste0("s",i), ]$x
+  }  
+}
+```
+
+```{r}
+#making sure chr columns are factors
+tar_sizes$tarchr<-as.factor(tar_sizes$tarchr)
+ref_sizes$refchr<-as.factor(ref_sizes$refchr)
+synteny$fill<-as.factor(synteny$fill)
+  
+```
+
+### Make plots
+
+#### Set pallete
+```{r}
+my_pallete <- list()
+my_pallete <- wheel("darkblue", num = nrow(ref_sizes))
+names(my_pallete) <- ref_sizes$refchr
+
+my_pallete_synt <- list()
+my_pallete_synt <- sample(wheel("darkblue", num = length(unique(synteny$group))))
+names(my_pallete_synt) <- (unique(synteny$group))
+
+```
+
+#### Generate synteny plot coloring by reference chromosome
+```{r}
+
+# Function to create scale
+get_chr_scale <- function(chr_size, position, strand = 'forward'){
+  if(position == 'top'){
+    y_min <- 2.1
+    y_med <- 2.12
+    y_max <- 2.14
+  }else if(position == 'bottom'){
+    y_min <- 0
+    y_med <- -0.02
+    y_max <- -0.04
+  }else{
+    stop()
+  }
+  divisions <- 2.5e5
+  numb_div <- round(chr_size/divisions, digits = 0)
+  x_coord <- c()
+  if(strand=='forward'){
+    counter <- 0
+    chr_pos <- c()
+    count_pos <- 0
+    while (counter <=  chr_size){
+      x_coord <- c(x_coord, counter)
+      counter <- counter + divisions
+      chr_pos <- c(chr_pos, count_pos)
+      count_pos <- count_pos + divisions
+    }
+  } else if(strand=='reverse'){
+    counter <- chr_size
+    chr_pos <- c()
+    count_pos <- 0
+    while (counter >= 0){
+      x_coord <- c(x_coord, counter)
+      counter <- counter - divisions
+      chr_pos <- c(chr_pos, count_pos)
+      count_pos <- count_pos + divisions
+    }   
+  } 
+  chrom_pos <-  tibble(x_coord=x_coord, 
+                       chr_pos=chr_pos,
+                       y_start=y_min) 
+  chrom_pos <- chrom_pos %>% mutate(y_end = ifelse(chr_pos / 1e6 == as.integer(chrom_pos$chr_pos / 1e6),y_max, y_med))
+  chrom_pos <- chrom_pos %>% mutate(label=ifelse(chr_pos / 1e6 == as.integer(chrom_pos$chr_pos / 1e6),as.character(as.integer(chrom_pos$chr_pos / 1e6)), ""))
+  return(chrom_pos)
+}                    
+```
+
+```{r}
+#This prints plot
+
+if(target_chr_id != 'all'){
+  my_chr_text_angle <- ifelse(length(unique(ref_sizes$refchr)) == 1, 0,45)
+  
+  pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) + 
+      geom_polygon(data = synteny, alpha = .5, 
+                   aes(x = x, y = y, group = group, fill = fill)) +
+      ggchicklet:::geom_rrect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                r = unit(0.5, 'npc'),
+                color="black", 
+                alpha = 1, 
+                size = 0.3) 
+  
+  # Reference chromosome
+  pairwise.p1 <- pairwise.p1 + 
+      geom_segment(data = get_chr_scale(chr_size = ref_sizes$xend, position = 'top'), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(ref_sizes$xend, position = 'top', strand = 'forward'),
+                aes(x=x_coord,y=y_end+0.02,label=label),size=3) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) 
+  
+  # Target chromosome
+  pairwise.p1 <- pairwise.p1 +
+      ggchicklet:::geom_rrect(data=tar_sizes, 
+                mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),
+                r = unit(0.5, 'npc'),
+                fill="grey85",
+                color="black", 
+                alpha = 1, 
+                size = 0.2 ) +
+      geom_segment(data = get_chr_scale(chr_size = tar_sizes$xend, # scale lines
+                                        position = "bottom", 
+                                        strand = chr_strand_target), 
+                   mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(tar_sizes$xend, # scale text
+                                   position = 'bottom', 
+                                   strand = chr_strand_target),
+                mapping = aes(x=x_coord,y=y_end-0.02,label=label),size=3) +
+      geom_text(data=tar_sizes, # target chrom label
+                aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),
+                size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5)
+  
+  # Polygon
+  # z$x[z$y == 0.1] <- tar_sizes$size + 1 - subset(z, y == 0.1)$x
+  pairwise.p1 <- pairwise.p1 + scale_fill_manual(values = my_pallete) 
+  
+  # Theme
+  pairwise.p1 <- pairwise.p1 +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+      
+  ggsave2(filename = paste0("synteny_plot_",target_chr_id,".pdf"), plot = pairwise.p1, width = 8, height = 5)
+  print(pairwise.p1)
+  
+}
+```
+
+#### Generate synteny plot coloring by syntenic block
+```{r}
+#This prints plot
+
+if(target_chr_id != 'all'){
+  pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+    geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
+      ggchicklet:::geom_rrect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                r = unit(0.5, 'npc'),
+                color="black", 
+                alpha = 1, 
+                size = 0.3 
+                ) +
+      geom_segment(data = get_chr_scale(ref_sizes$xend, position = 'top', strand = 'forward'), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(ref_sizes$xend, position = 'top', strand = 'forward'),
+                aes(x=x_coord,y=y_end+0.02,label=label),size=3) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.3,label=refchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      ggchicklet:::geom_rrect(data=tar_sizes, 
+                              mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),
+                              r = unit(0.5, 'npc'),
+                              fill="grey85",
+                              color="black", 
+                              alpha = 1, 
+                              size = 0.2 ) +
+      geom_segment(data = get_chr_scale(tar_sizes$xend, position = "bottom", strand = chr_strand_target), mapping = aes(x=x_coord, xend=x_coord, y=y_start, yend=y_end)) +
+      geom_text(data=get_chr_scale(tar_sizes$xend, position = 'bottom', strand = chr_strand_target),
+                aes(x=x_coord,y=y_end-0.02,label=label),size=3) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.2,label=tarchr),size=3,angle=my_chr_text_angle) +
+      geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      scale_fill_manual(values = my_pallete_synt) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+  
+  ggsave2(filename = paste0("synteny_plot_color_synt_block_",target_chr_id,".pdf"), plot = pairwise.p2, width = 8, height = 5)
+  print(pairwise.p2)
+  
+}
+```
+
+#### Generate synteny plot coloring by reference chromosome
+```{r}
+#This prints plot
+if(target_chr_id == 'all'){
+  pairwise.p1 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_polygon(data = synteny, alpha = 0.8, aes(x = x, y = y, group = group, fill = fill)) +
+      geom_rect(mapping = aes(xmin=-40, xmax=-3, ymin=-1.5, ymax=3.5),
+              color="white", 
+              alpha = 0, 
+              size = 0.3 ) +
+      ggchicklet:::geom_rrect(data=ref_sizes, 
+                              mapping=aes(xmin=xstart, 
+                                          xmax=xend, 
+                                          ymin=2, 
+                                          ymax=2.10, 
+                                          fill=refchr),
+                              r = unit(0.5, 'npc'),
+                              color="black", 
+                              alpha = 1, 
+                              size = 0.3 ) + 
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.15,label=refchr),
+                size=3,
+                angle=90, 
+                hjust = 0) +
+      #geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      ggchicklet:::geom_rrect(data=tar_sizes, 
+                              mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),
+                              r = unit(0.5, 'npc'),
+                              fill="grey85",
+                              color="black", 
+                              alpha = 1, 
+                              size = 0.2 ) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.1,label=tarchr),
+                              size=3,
+                              angle=90,
+                              hjust = 1) +
+      #geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      scale_fill_manual(values = my_pallete) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+ 
+            
+  ggsave2(filename = "synteny_plot.pdf", plot = pairwise.p1, width = 25, height = 4)
+  print(pairwise.p1)
+}
+```
+
+#### Generate synteny plot coloring by syntenic block
+```{r}
+#This prints plot
+if(target_chr_id == 'all'){
+  pairwise.p2 <- ggplot(linewidth = 0.2, font = 10, data = data) +
+      geom_polygon(data = synteny, alpha = .5, aes(x = x, y = y, group = group, fill = group)) +
+      geom_rect(mapping = aes(xmin=-30, xmax=-3, ymin=-1.5, ymax=3.5),
+              color="white", 
+              alpha = 0, 
+              size = 0.3 ) +
+      ggchicklet:::geom_rrect(data=ref_sizes, 
+                mapping=aes(xmin=xstart, 
+                            xmax=xend, 
+                            ymin=2, 
+                            ymax=2.10, 
+                            fill=refchr),
+                r = unit(0.5, 'npc'),
+                color="black", 
+                alpha = 1, 
+                size = 0.3 ) +
+      geom_text(data=ref_sizes,aes(x=(xstart+xend)/2,y=2.17,label=refchr),
+                size=3,
+                angle=90, 
+                hjust = 0) +
+      #geom_text(mapping=aes(x=-5,y=2, label=refName),size=3,hjust = 1.5) +
+      ggchicklet:::geom_rrect(data=tar_sizes, 
+                              mapping=aes(xmin=xstart, xmax=xend, ymin=0, ymax=0.10),
+                              r = unit(0.5, 'npc'),
+                              fill="grey85",
+                         color="black", 
+                         alpha = 1, 
+                         size = 0.2 ) +
+      geom_text(data=tar_sizes,aes(x=(xstart+xend)/2,y=-0.3,label=tarchr),
+                size=3,
+                angle=90,
+                hjust = 1) +
+      #geom_text(mapping=aes(x=-5,y=0.2, label=tarName),size=3,hjust = 1.5) +
+      scale_fill_manual(values = my_pallete_synt) +
+      theme(panel.background = element_blank(),
+                     strip.background = element_blank(),
+                     axis.title.y = element_blank(),
+                     axis.title.x = element_blank(),
+                     axis.text.x = element_blank(),
+                     axis.text.y = element_blank(),
+                     axis.ticks.x=element_blank(),
+                     axis.ticks.y=element_blank(),
+                     legend.position="none")
+  ggsave2(filename = "synteny_plot_color_synt_block.pdf", plot = pairwise.p2, width = 25, height = 4)
+  print(pairwise.p2)
+}
+```
+
+
+
+
+
